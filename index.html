@@ -119,6 +119,7 @@ details p,details li{font-size:13px;color:var(--muted)}
 
 .photo{margin-top:14px;padding:12px;border:1px dashed var(--accent);border-radius:10px;background:var(--accent-soft)}
 .upbtn{display:inline-flex;flex-direction:row;align-items:center;color:var(--accent-ink);background:var(--accent);border:0;font-weight:700;font-size:14px;padding:8px 14px;border-radius:8px;cursor:pointer}
+.upbtn.alt{background:var(--surface);color:var(--accent);border:1px solid var(--accent)}
 .upbtn:focus-within{outline:2px solid var(--accent);outline-offset:2px}
 .vh{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 .presult{display:grid;grid-template-columns:110px minmax(0,1fr);gap:12px;margin-top:12px}
@@ -253,6 +254,8 @@ footer{color:var(--muted);font-size:12px;margin-top:24px;max-width:70ch}
             <div class="row">
               <label class="ghost upbtn" for="pFile">拍照估算熱量</label>
               <input id="pFile" type="file" accept="image/*" capture="environment" class="vh">
+              <label class="ghost upbtn alt" for="pLib">從相簿選照片</label>
+              <input id="pLib" type="file" accept="image/*" class="vh">
               <input id="pHint" placeholder="補充說明（選填），例如：飯只吃一半、雞腿去皮" style="flex:1 1 200px;width:auto">
             </div>
             <details id="aiCfg" hidden>
@@ -626,7 +629,7 @@ async function initPhoto(){
     sampleFn=await claude.use("sample"); if(!sampleFn) return;
     const lim=await sampleFn.limits().catch(()=>null);
     if(!lim||!lim.images) return;
-    $("pFile").accept=lim.images.mediaTypes.join(",");
+    $("pFile").accept=$("pLib").accept=lim.images.mediaTypes.join(",");
     $("photo").hidden=false;
   }catch(e){}
 }
@@ -671,10 +674,12 @@ function pShowItems(){
     <span>${esc(it.name)}<small>${esc(it.portion||"")} · P ${r1(it.p)} / C ${r1(it.c)} / F ${r1(it.f)} g</small></span>
     <input type="number" data-k="${i}" value="${r0(it.kcal)}" aria-label="${esc(it.name)} 熱量（可修改）"></label>`).join("");
 }
-function pReset(){ if(pCtl) pCtl.abort(); $("pResult").hidden=true; $("pFile").value=""; pFound=[]; }
-$("pFile").addEventListener("change",async()=>{
-  const file=$("pFile").files[0]; if(!file||!engine) return;
-  if(engine==="openai"&&!local.get("oaiKey")){ $("aiCfg").open=true; $("pFile").value=""; toast("請先設定 OpenAI API 金鑰"); return; }
+function pReset(){ if(pCtl) pCtl.abort(); $("pResult").hidden=true; $("pFile").value=$("pLib").value=""; pFound=[]; }
+// 拍照和從相簿選共用同一個流程
+["pFile","pLib"].forEach(id=>$(id).addEventListener("change",()=>{ const f=$(id).files[0]; $(id).value=""; if(f) analyzePhoto(f); }));
+async function analyzePhoto(file){
+  if(!engine) return;
+  if(engine==="openai"&&!local.get("oaiKey")){ $("aiCfg").open=true; toast("請先設定 OpenAI API 金鑰"); return; }
   if(pCtl) pCtl.abort();
   const ctl=pCtl=new AbortController();
   $("pResult").hidden=false; $("pImg").src=URL.createObjectURL(file);
@@ -703,7 +708,7 @@ $("pFile").addEventListener("change",async()=>{
       : code==="image_rejected"?"這張照片無法讀取，請換一張 JPG 或 PNG。"
       : "請再試一次，或改用上方清單加入。";
   }
-});
+}
 $("pStop").addEventListener("click",()=>{ if(pCtl) pCtl.abort(); });
 $("pCancel").addEventListener("click",pReset);
 $("pAdd").addEventListener("click",()=>{
