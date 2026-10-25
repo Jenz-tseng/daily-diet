@@ -703,7 +703,7 @@ function buddySVG(f,sex){
   const skirt = sex==="f" ? `<path d="M${cx-hw/2-2} 104 L${cx+hw/2+2} 104 L${cx+hw/2+12} 128 L${cx-hw/2-12} 128 Z" fill="var(--prot)"/>` : "";
   const hairBack = sex==="f" ? `<path d="M${cx-hr-3} 34 Q${cx-hr-6} 60 ${cx-hr+2} 64 L${cx+hr-2} 64 Q${cx+hr+6} 60 ${cx+hr+3} 34 Z" fill="var(--hair)"/>` : "";
   const hairTop = sex==="f"
-    ? `<path d="M${cx-hr-2} 32 Q${cx} ${8} ${cx+hr+2} 32 Q${cx+4} 22 ${cx-hr-2} 32 Z" fill="var(--hair)"/>`
+    ? `<path d="M${cx-hr-2} 36 Q${cx-hr-2} 12 ${cx} 12 Q${cx+hr+2} 12 ${cx+hr+2} 36 Q${cx+hr-3} 25 ${cx+4} 23 Q${cx-6} 27 ${cx-hr+2} 30 Z" fill="var(--hair)"/>`
     : `<path d="M${cx-hr} 30 Q${cx-hr+2} ${12} ${cx} 13 Q${cx+hr-2} ${12} ${cx+hr} 30 Q${cx+6} 20 ${cx-hr} 30 Z" fill="var(--hair)"/>`;
   return `<ellipse cx="${cx}" cy="160" rx="${30+14*f}" ry="5" fill="var(--sunk)"/>
     ${legs}${hairBack}${arms}
