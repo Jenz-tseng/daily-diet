@@ -259,13 +259,12 @@ footer{color:var(--muted);font-size:12px;margin-top:24px;max-width:70ch}
               <input id="pHint" placeholder="補充說明（選填），例如：飯只吃一半、雞腿去皮" style="flex:1 1 200px;width:auto">
             </div>
             <details id="aiCfg" hidden>
-              <summary id="aiCfgSum">設定 OpenAI API 金鑰（拍照辨識需要）</summary>
-              <p class="note" style="margin:6px 0">金鑰只存在你這台裝置的瀏覽器，不會上傳到其他地方；辨識費用由你的 OpenAI 帳號支付。可到 platform.openai.com 的 API keys 頁面建立。</p>
+              <summary id="aiCfgSum">輸入使用密碼（拍照辨識需要）</summary>
+              <p class="note" style="margin:6px 0">向網站管理者索取密碼。輸入一次後，這台裝置會記住。</p>
               <div class="row">
-                <input id="oaiKey" type="password" autocomplete="off" placeholder="sk-..." style="flex:2 1 200px;width:auto">
-                <input id="oaiModel" placeholder="模型" style="flex:1 1 120px;width:auto">
-                <button class="primary" type="button" id="oaiSave">儲存</button>
-                <button class="ghost" type="button" id="oaiClear">清除金鑰</button>
+                <input id="pwd" type="password" autocomplete="off" placeholder="使用密碼" style="flex:1 1 180px;width:auto">
+                <button class="primary" type="button" id="pwdSave">儲存</button>
+                <button class="ghost" type="button" id="pwdClear">清除</button>
               </div>
             </details>
             <div class="presult" id="pResult" hidden>
@@ -611,18 +610,18 @@ $("today").addEventListener("click",()=>goDate(todayStr()));
 $("hist").addEventListener("click",e=>{ const r=e.target.closest("[data-d]"); if(r) goDate(r.dataset.d); });
 
 // ---------- 拍照估算：把照片交給 Claude 辨識，結果確認後才加入 ----------
-// 在 Claude 裡開啟時用 Claude 辨識；獨立網站（GitHub Pages）則用使用者自己的 OpenAI 金鑰
+// 在 Claude 裡開啟時用 Claude 辨識；獨立網站（GitHub Pages）則經由 Cloudflare 後端呼叫 GPT，金鑰只放在後端
 let sampleFn=null, pCtl=null, pFound=[], engine=null;
-const OAI_MODEL="gpt-4o-mini";
-function oaiCfgState(){
-  const has=!!local.get("oaiKey");
-  $("aiCfgSum").textContent = has ? "OpenAI API 金鑰已設定（點此修改）" : "設定 OpenAI API 金鑰（拍照辨識需要）";
+const PROXY_URL="https://daily-diet-api.jenz-tseng.workers.dev";
+function pwdState(){
+  const has=!!local.get("pwd");
+  $("aiCfgSum").textContent = has ? "使用密碼已設定（點此修改）" : "輸入使用密碼（拍照辨識需要）";
   $("aiCfg").open = !has;
 }
 async function initPhoto(){
   if(!(window.claude && window.claude.use)){
-    engine="openai"; $("photo").hidden=false; $("aiCfg").hidden=false;
-    $("oaiModel").value=local.get("oaiModel")||OAI_MODEL; oaiCfgState(); return;
+    if(!PROXY_URL) return;
+    engine="proxy"; $("photo").hidden=false; $("aiCfg").hidden=false; pwdState(); return;
   }
   engine="claude";
   try{
@@ -650,25 +649,24 @@ function shrink(file){
 }
 async function analyze(file,prompt,signal){
   if(engine==="claude") return sampleFn.json(prompt,{images:file,signal});
-  const key=local.get("oaiKey"); if(!key) throw {code:"no_key"};
+  const pwd=local.get("pwd"); if(!pwd) throw {code:"no_pwd"};
   const dataUrl=await shrink(file);
   let r;
   try{
-    r=await fetch("https://api.openai.com/v1/chat/completions",{method:"POST",signal,
-      headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},
-      body:JSON.stringify({model:local.get("oaiModel")||OAI_MODEL,response_format:{type:"json_object"},
-        messages:[{role:"user",content:[{type:"text",text:prompt},{type:"image_url",image_url:{url:dataUrl}}]}]})});
+    r=await fetch(PROXY_URL,{method:"POST",signal,
+      headers:{"Content-Type":"application/json","X-Access-Password":pwd},
+      body:JSON.stringify({image:dataUrl,hint:$("pHint").value.trim()})});
   }catch(e){ throw {code: e&&e.name==="AbortError"?"cancelled":"upstream_error"}; }
-  if(!r.ok) throw {code: r.status===401?"bad_key": r.status===429?"rate_limited": r.status===404?"bad_model":"upstream_error"};
-  const j=await r.json();
-  try{ return JSON.parse(j.choices[0].message.content); }catch(e){ throw {code:"invalid_json"}; }
+  let j=null; try{ j=await r.json(); }catch(e){}
+  if(!r.ok) throw {code:(j&&j.error)||"upstream_error"};
+  return j;
 }
-$("oaiSave").addEventListener("click",()=>{
-  const k=$("oaiKey").value.trim(), m=$("oaiModel").value.trim()||OAI_MODEL;
-  if(k) local.set("oaiKey",k); local.set("oaiModel",m); $("oaiKey").value="";
-  oaiCfgState(); toast(local.get("oaiKey")?"已儲存金鑰":"請輸入金鑰");
+$("pwdSave").addEventListener("click",()=>{
+  const p=$("pwd").value.trim();
+  if(!p){ toast("請輸入密碼"); return; }
+  local.set("pwd",p); $("pwd").value=""; pwdState(); toast("已儲存密碼");
 });
-$("oaiClear").addEventListener("click",()=>{ try{ localStorage.removeItem("diet:oaiKey"); }catch(e){} oaiCfgState(); toast("已清除金鑰"); });
+$("pwdClear").addEventListener("click",()=>{ try{ localStorage.removeItem("diet:pwd"); }catch(e){} pwdState(); toast("已清除密碼"); });
 function pShowItems(){
   $("pItems").innerHTML = pFound.map((it,i)=>`<label class="pi"><input type="checkbox" data-i="${i}" checked>
     <span>${esc(it.name)}<small>${esc(it.portion||"")} · P ${r1(it.p)} / C ${r1(it.c)} / F ${r1(it.f)} g</small></span>
@@ -679,7 +677,7 @@ function pReset(){ if(pCtl) pCtl.abort(); $("pResult").hidden=true; $("pFile").v
 ["pFile","pLib"].forEach(id=>$(id).addEventListener("change",()=>{ const f=$(id).files[0]; $(id).value=""; if(f) analyzePhoto(f); }));
 async function analyzePhoto(file){
   if(!engine) return;
-  if(engine==="openai"&&!local.get("oaiKey")){ $("aiCfg").open=true; toast("請先設定 OpenAI API 金鑰"); return; }
+  if(engine==="proxy"&&!local.get("pwd")){ $("aiCfg").open=true; toast("請先輸入使用密碼"); return; }
   if(pCtl) pCtl.abort();
   const ctl=pCtl=new AbortController();
   $("pResult").hidden=false; $("pImg").src=URL.createObjectURL(file);
@@ -702,8 +700,9 @@ async function analyzePhoto(file){
     if(code==="cancelled"){ $("pResult").hidden=true; return; }
     if(code==="not_granted"||code==="sampling_disabled"||code==="images_unavailable"){ $("photo").hidden=true; toast("此帳號無法使用拍照辨識"); return; }
     $("pStatus").textContent="辨識失敗";
-    $("pNote").textContent = code==="bad_key"?"OpenAI 金鑰無效，請重新設定。"
-      : code==="bad_model"?"找不到這個模型名稱，請在金鑰設定裡改成 gpt-4o-mini。"
+    if(code==="bad_password"){ $("aiCfg").open=true; }
+    $("pNote").textContent = code==="bad_password"?"使用密碼不正確，請重新輸入。"
+      : code==="not_configured"?"後端尚未設定完成，請聯絡網站管理者。"
       : code==="rate_limited"?"使用次數或額度暫時達到上限，稍後再試。"
       : code==="image_rejected"?"這張照片無法讀取，請換一張 JPG 或 PNG。"
       : "請再試一次，或改用上方清單加入。";
