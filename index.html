@@ -312,8 +312,20 @@ footer{color:var(--muted);font-size:12px;margin-top:24px;max-width:70ch}
       </section>
 
       <section class="card hist">
-        <h2>近 14 天熱量</h2>
-        <p class="hint">每天攝取熱量和目標的比較。點長條可跳到那一天。</p>
+        <h2 id="histTitle">近 14 天熱量</h2>
+        <div class="row" style="margin-bottom:10px">
+          <div class="seg" id="histSeg" role="group" aria-label="查看期間" style="flex:0 1 260px">
+            <button type="button" data-v="14" aria-pressed="true">14 天</button>
+            <button type="button" data-v="30" aria-pressed="false">近一個月</button>
+            <button type="button" data-v="custom" aria-pressed="false">自訂</button>
+          </div>
+          <div class="row" id="histCustom" hidden>
+            <input type="date" id="histFrom" aria-label="開始日期" style="width:auto">
+            <span class="note">到</span>
+            <input type="date" id="histTo" aria-label="結束日期" style="width:auto">
+          </div>
+        </div>
+        <p class="hint" id="histStats">每天攝取熱量和目標的比較。點長條可跳到那一天。</p>
         <div id="hist"></div>
         <div class="legend"><span><i style="background:var(--accent)"></i>在目標內</span><span><i style="background:var(--bad)"></i>超過目標 10% 以上</span><span><i style="background:var(--muted)"></i>目標線</span></div>
       </section>
@@ -447,7 +459,7 @@ async function initRemote(){
     const snap=await profileRef.get();
     if(snap.exists){ state.profile={...EXAMPLE,...snap.data()}; state.isExample=false; fillForm(); recalc(); }
     else if(!state.isExample){ await profileRef.set(state.profile); } // 把本機資料搬上去
-    remote.days.orderBy("date","desc").limit(30).onSnapshot(s=>{
+    remote.days.orderBy("date","desc").limit(200).onSnapshot(s=>{
       s.docs.forEach(doc=>{ state.recent[doc.id]=doc.data(); });
       renderHistory();
     }, ()=>{});
@@ -571,21 +583,44 @@ function renderFoods(){
     : `<span class="note">找不到「${esc(q)}」，可以用下方自訂食物加入。</span>`;
 }
 
+// 查看期間：預設 14 天，可切換近一個月或自訂區間（最多 180 天）
+const HIST_MAX=180;
+const hist={mode:"14", from:"", to:""};
+function histDays(){
+  const today=todayStr();
+  if(hist.mode!=="custom") return {from:shift(today,-(+hist.mode-1)), to:today};
+  let from=hist.from||shift(today,-13), to=hist.to||today;
+  if(from>to) [from,to]=[to,from];
+  const n=Math.round((new Date(to+"T12:00:00")-new Date(from+"T12:00:00"))/864e5)+1;
+  if(n>HIST_MAX) from=shift(to,-(HIST_MAX-1));
+  return {from,to};
+}
+const md = d => `${+d.slice(5,7)}/${+d.slice(8)}`;
 function renderHistory(){
-  const tgt=A?A.target:2000, days=[];
-  for(let i=13;i>=0;i--) days.push(shift(todayStr(),-i));
+  const tgt=A?A.target:2000, days=[], {from,to}=histDays();
+  for(let d=from; d<=to; d=shift(d,1)) days.push(d);
+  const n=days.length;
+  $("histTitle").textContent = hist.mode==="custom" ? `${md(from)} – ${md(to)} 熱量` : hist.mode==="30" ? "近一個月熱量" : "近 14 天熱量";
   const vals=days.map(d=>{ const b=state.recent[d]||(d===state.date?state.day:null)||local.get("day:"+d); return {d, k: b?totals(b.items||[]).kcal:0, w: b&&b.weight}; });
+  const logged=vals.filter(v=>v.k>0), over=logged.filter(v=>v.k>tgt*1.1).length;
+  $("histStats").textContent = logged.length
+    ? `${n} 天中記錄了 ${logged.length} 天，平均每天 ${r0(logged.reduce((s,v)=>s+v.k,0)/logged.length)} 大卡，超過目標 10% 以上 ${over} 天。點長條可跳到那一天。`
+    : `這段期間還沒有紀錄。`;
   const max=Math.max(tgt*1.3, ...vals.map(v=>v.k));
-  const W=560,H=200,pl=36,pr=8,pt=10,pb=34, bw=(W-pl-pr)/14;
+  const W=560,H=200,pl=36,pr=8,pt=10,pb=34, bw=(W-pl-pr)/n;
+  const step=n<=16?1:Math.ceil(n/12), showW=n<=16;
   const y=v=>pt+(H-pt-pb)*(1-v/max);
-  let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="近 14 天每日熱量長條圖">`;
+  let s=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${$("histTitle").textContent}長條圖">`;
   [0,0.5,1].forEach(f=>{ const v=Math.round(max*f/100)*100; s+=`<line x1="${pl}" x2="${W-pr}" y1="${y(v)}" y2="${y(v)}" stroke="var(--line)" stroke-width="1"/><text x="${pl-4}" y="${y(v)+3}" text-anchor="end">${v}</text>`; });
   vals.forEach((v,i)=>{
     const x=pl+i*bw+bw*0.18, w=bw*0.64, col=v.k>tgt*1.1?"var(--bad)":"var(--accent)";
     if(v.k>0) s+=`<rect x="${x}" y="${y(v.k)}" width="${w}" height="${y(0)-y(v.k)}" rx="2" fill="${col}" opacity="${v.d===state.date?1:0.75}"/>`;
     s+=`<rect x="${pl+i*bw}" y="${pt}" width="${bw}" height="${H-pt-pb+20}" fill="transparent" data-d="${v.d}" style="cursor:pointer"><title>${v.d}：${r0(v.k)} 大卡${v.w?`，體重 ${v.w} kg`:""}</title></rect>`;
-    s+=`<text x="${x+w/2}" y="${H-pb+14}" text-anchor="middle" ${v.d===state.date?'style="fill:var(--fg)"':""}>${+v.d.slice(8)}</text>`;
-    if(v.w) s+=`<text x="${x+w/2}" y="${H-pb+27}" text-anchor="middle">${v.w}</text>`;
+    if((n-1-i)%step===0){
+      const lab = (i<step||v.d.slice(8)==="01") ? md(v.d) : +v.d.slice(8);
+      s+=`<text x="${x+w/2}" y="${H-pb+14}" text-anchor="middle" ${v.d===state.date?'style="fill:var(--fg)"':""}>${lab}</text>`;
+    }
+    if(v.w&&showW) s+=`<text x="${x+w/2}" y="${H-pb+27}" text-anchor="middle">${v.w}</text>`;
   });
   s+=`<line x1="${pl}" x2="${W-pr}" y1="${y(tgt)}" y2="${y(tgt)}" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4"/>`;
   s+=`</svg>`;
@@ -635,6 +670,21 @@ $("date").addEventListener("change",e=>{ if(e.target.value) goDate(e.target.valu
 $("prevDay").addEventListener("click",()=>goDate(shift(state.date,-1)));
 $("nextDay").addEventListener("click",()=>goDate(shift(state.date,1)));
 $("today").addEventListener("click",()=>goDate(todayStr()));
+$("histSeg").addEventListener("click",e=>{
+  const b=e.target.closest("button"); if(!b) return;
+  hist.mode=b.dataset.v;
+  [...$("histSeg").children].forEach(x=>x.setAttribute("aria-pressed",x===b));
+  $("histCustom").hidden = hist.mode!=="custom";
+  if(hist.mode==="custom"){
+    const r=histDays(); $("histFrom").value=hist.from=hist.from||r.from; $("histTo").value=hist.to=hist.to||r.to;
+    $("histFrom").max=$("histTo").max=todayStr();
+  }
+  renderHistory();
+});
+["histFrom","histTo"].forEach(id=>$(id).addEventListener("change",()=>{
+  hist.from=$("histFrom").value; hist.to=$("histTo").value; renderHistory();
+  const r=histDays(); if(hist.from&&hist.to&&r.from!==(hist.from<hist.to?hist.from:hist.to)) toast(`最多顯示 ${HIST_MAX} 天，已從 ${md(r.from)} 開始`);
+}));
 $("hist").addEventListener("click",e=>{ const r=e.target.closest("[data-d]"); if(r) goDate(r.dataset.d); });
 
 // ---------- 拍照估算：把照片交給 Claude 辨識，結果確認後才加入 ----------
