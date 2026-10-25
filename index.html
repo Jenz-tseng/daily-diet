@@ -132,10 +132,17 @@ details p,details li{font-size:13px;color:var(--muted)}
 @media (max-width:480px){.presult{grid-template-columns:minmax(0,1fr)}}
 .presult img{width:110px;height:110px;object-fit:cover;border-radius:8px;background:var(--sunk)}
 .pbody{min-width:0;display:flex;flex-direction:column;gap:6px}
-.pi{display:grid;grid-template-columns:auto minmax(0,1fr) 70px;gap:8px;align-items:center;font-size:14px;padding:4px 0;border-bottom:1px dashed var(--line)}
+.pi{display:grid;grid-template-columns:auto minmax(0,1fr) auto 64px;gap:4px 8px;align-items:center;font-size:14px;padding:6px 0;border-bottom:1px dashed var(--line)}
+.pi.off{opacity:.5}
 .pi input[type=checkbox]{width:18px;height:18px}
-.pi small{display:block;color:var(--muted);font-size:12px}
-.pi input[type=number]{padding:4px 6px;font-family:var(--f-num);text-align:right}
+.pi .pname{padding:4px 8px}
+.pi .pg{display:flex;align-items:center;gap:3px;font-size:12px;color:var(--muted)}
+.pi .pg input{width:68px;padding:4px 6px;font-family:var(--f-num);text-align:right}
+.pi .pk{font-family:var(--f-num);text-align:right;white-space:nowrap}
+.pi .pk small{font-size:11px;color:var(--muted);margin-left:2px}
+.pi .pk em{font-style:normal;font-size:12px;color:var(--warn);font-family:var(--f-body)}
+.pi .pm{grid-column:2/-1;color:var(--muted);font-size:12px}
+button:disabled{opacity:.45;cursor:not-allowed}
 .meal{margin-top:16px}
 .meal h3{font-size:14px;margin:0 0 4px;display:flex;justify-content:space-between;border-bottom:2px solid var(--fg);padding-bottom:3px}
 .meal h3 span{font-family:var(--f-num);font-weight:500}
@@ -281,7 +288,11 @@ footer{color:var(--muted);font-size:12px;margin-top:24px;max-width:70ch}
                 <div class="row" style="justify-content:space-between"><b id="pStatus">分析中…</b><button class="ghost" type="button" id="pStop">停止</button></div>
                 <div id="pItems"></div>
                 <p class="note" id="pNote"></p>
-                <div class="row" id="pActions" hidden><button class="primary" type="button" id="pAdd">加入勾選的食物</button><button class="ghost" type="button" id="pCancel">取消</button></div>
+                <div class="row" id="pActions" hidden>
+                  <button class="ghost" type="button" id="pMore">＋ 新增品項</button>
+                  <button class="ghost" type="button" id="pRecalc" hidden>重新計算</button>
+                  <button class="primary" type="button" id="pAdd">加入勾選的食物</button>
+                  <button class="ghost" type="button" id="pCancel">取消</button></div>
               </div>
             </div>
           </div>
@@ -649,11 +660,17 @@ async function initPhoto(){
     $("photo").hidden=false;
   }catch(e){}
 }
-const P_PROMPT = `你是台灣的營養師。附上的照片是一餐食物。請辨識照片中每一樣食物，依台灣常見份量估計實際份量、熱量與三大營養素。
-若有醬汁、勾芡、油炸，熱量要算進去。若照片不是食物，items 回傳空陣列。
+// 與 worker/worker.js 的提示相同；在 Claude 裡開啟時由頁面直接送出
+const PHOTO_PROMPT = `你是台灣的營養師。附上的照片是一餐食物。請辨識照片中每一樣食物，估計實際重量（公克），以及該食物以照片中烹調方式的每 100 公克營養。
+若有醬汁、勾芡、油炸，要算進每 100 公克的數值。若照片不是食物，items 回傳空陣列。
 只回覆 JSON，格式如下，不要其他文字：
-{"items":[{"name":"白飯","portion":"約1碗(160g)","kcal":280,"p":8,"c":62,"f":0.6}],"note":"一句話說明估計的不確定處"}
-kcal 單位大卡，p/c/f 為蛋白質、醣類、脂肪的公克數，都是數字。`;
+{"items":[{"name":"白飯","grams":160,"kcal100":175,"p100":5,"c100":39,"f100":0.4}],"note":"一句話說明估計的不確定處"}
+grams 為公克；kcal100 為每 100 公克大卡；p100/c100/f100 為每 100 公克蛋白質、醣類、脂肪公克數；都是數字。`;
+const RECALC_PROMPT = `你是台灣的營養師。以下是使用者確認過的食物名稱，請依台灣常見做法估計每一樣的每 100 公克營養。
+只回覆 JSON，items 順序與名稱要和輸入完全相同，不要其他文字：
+{"items":[{"name":"白飯","kcal100":175,"p100":5,"c100":39,"f100":0.4}]}
+kcal100 為每 100 公克大卡；p100/c100/f100 為每 100 公克蛋白質、醣類、脂肪公克數；都是數字。
+食物：`;
 // 照片先縮到長邊 1024px 再送出，省流量也省費用
 function shrink(file){
   return new Promise((res,rej)=>{
@@ -664,15 +681,19 @@ function shrink(file){
     img.onerror=()=>rej({code:"image_rejected"}); img.src=url;
   });
 }
-async function analyze(file,prompt,signal){
-  if(engine==="claude") return sampleFn.json(prompt,{images:file,signal});
+// req 為 {file, hint} 照片辨識，或 {names} 依品項名稱重新估計每 100 公克營養
+async function analyze(req,signal){
+  if(engine==="claude"){
+    if(req.names) return sampleFn.json(RECALC_PROMPT+JSON.stringify(req.names),{signal});
+    return sampleFn.json(PHOTO_PROMPT+(req.hint?`\n使用者補充：${req.hint}`:""),{images:req.file,signal});
+  }
   const pwd=local.get("pwd"); if(!pwd) throw {code:"no_pwd"};
-  const dataUrl=await shrink(file);
+  const payload = req.names ? {names:req.names} : {image:await shrink(req.file),hint:req.hint};
   let r;
   try{
     r=await fetch(PROXY_URL,{method:"POST",signal,
       headers:{"Content-Type":"application/json","X-Access-Password":pwd},
-      body:JSON.stringify({image:dataUrl,hint:$("pHint").value.trim()})});
+      body:JSON.stringify(payload)});
   }catch(e){ throw {code: e&&e.name==="AbortError"?"cancelled":"upstream_error"}; }
   let j=null; try{ j=await r.json(); }catch(e){}
   if(!r.ok) throw {code:(j&&j.error)||"upstream_error"};
@@ -684,10 +705,72 @@ $("pwdSave").addEventListener("click",()=>{
   local.set("pwd",p); $("pwd").value=""; pwdState(); toast("已儲存密碼");
 });
 $("pwdClear").addEventListener("click",()=>{ try{ localStorage.removeItem("diet:pwd"); }catch(e){} pwdState(); toast("已清除密碼"); });
+// 每個品項：{name, grams, k100, p100, c100, f100, on, stale}；stale 表示改過名稱、營養尚未重算
+const per = (it,k) => it[k]*it.grams/100;
+function pRow(it,i){
+  return `<input type="checkbox" data-i="${i}" ${it.on?"checked":""} aria-label="選取 ${esc(it.name)}">
+    <input class="pname" data-n="${i}" value="${esc(it.name)}" aria-label="品項名稱">
+    <span class="pg"><input type="number" inputmode="decimal" min="0" step="5" data-g="${i}" value="${r0(it.grams)}" aria-label="${esc(it.name)} 公克數">g</span>
+    <span class="pk">${it.stale?'<em>待重算</em>':`${r0(per(it,"k100"))}<small>kcal</small>`}</span>
+    <small class="pm">${it.stale?"改了品項，按「重新計算」更新營養":`P ${r1(per(it,"p100"))} / C ${r1(per(it,"c100"))} / F ${r1(per(it,"f100"))} g・每100g ${r0(it.k100)} kcal`}</small>`;
+}
 function pShowItems(){
-  $("pItems").innerHTML = pFound.map((it,i)=>`<label class="pi"><input type="checkbox" data-i="${i}" checked>
-    <span>${esc(it.name)}<small>${esc(it.portion||"")} · P ${r1(it.p)} / C ${r1(it.c)} / F ${r1(it.f)} g</small></span>
-    <input type="number" data-k="${i}" value="${r0(it.kcal)}" aria-label="${esc(it.name)} 熱量（可修改）"></label>`).join("");
+  $("pItems").innerHTML = pFound.map((it,i)=>`<div class="pi${it.on?"":" off"}" data-row="${i}">${pRow(it,i)}</div>`).join("");
+  pSummary();
+}
+function pSummary(){
+  const on=pFound.filter(x=>x.on), stale=pFound.some(x=>x.stale&&x.on);
+  $("pRecalc").hidden=!pFound.some(x=>x.stale);
+  $("pAdd").disabled=stale||!on.length;
+  $("pStatus").textContent = stale ? "有品項待重新計算"
+    : `已選 ${on.length} 樣，共約 ${r0(on.reduce((s,x)=>s+per(x,"k100"),0))} 大卡`;
+}
+// 只更新改動的那一列，避免輸入框失去焦點
+function pUpdateRow(i){
+  const row=$("pItems").querySelector(`[data-row="${i}"]`), it=pFound[i];
+  row.classList.toggle("off",!it.on);
+  row.querySelector(".pk").innerHTML = it.stale?'<em>待重算</em>':`${r0(per(it,"k100"))}<small>kcal</small>`;
+  row.querySelector(".pm").textContent = it.stale?"改了品項，按「重新計算」更新營養":`P ${r1(per(it,"p100"))} / C ${r1(per(it,"c100"))} / F ${r1(per(it,"f100"))} g・每100g ${r0(it.k100)} kcal`;
+  pSummary();
+}
+$("pItems").addEventListener("input",e=>{
+  const t=e.target;
+  if(t.dataset.g!=null){ const i=+t.dataset.g; pFound[i].grams=Math.max(0,num(t.value)||0); pUpdateRow(i); }
+  else if(t.dataset.n!=null){ const i=+t.dataset.n; pFound[i].name=t.value; pFound[i].stale=t.value.trim()!==pFound[i].orig; pUpdateRow(i); }
+  else if(t.dataset.i!=null){ const i=+t.dataset.i; pFound[i].on=t.checked; pUpdateRow(i); }
+});
+$("pMore").addEventListener("click",()=>{
+  pFound.push({name:"",orig:"",grams:100,k100:0,p100:0,c100:0,f100:0,on:true,stale:true});
+  pShowItems(); $("pActions").hidden=false;
+  const ins=$("pItems").querySelectorAll(".pname"); ins[ins.length-1].focus();
+});
+$("pRecalc").addEventListener("click",async()=>{
+  const idx=pFound.map((x,i)=>i).filter(i=>pFound[i].stale&&pFound[i].name.trim());
+  if(!idx.length){ toast("請先填寫品項名稱"); return; }
+  if(pCtl) pCtl.abort();
+  const ctl=pCtl=new AbortController();
+  $("pRecalc").disabled=true; $("pStatus").textContent="重新計算中…"; $("pStop").hidden=false;
+  try{
+    const res=await analyze({names:idx.map(i=>pFound[i].name.trim())},ctl.signal);
+    if(ctl!==pCtl) return;
+    const items=Array.isArray(res&&res.items)?res.items:[];
+    idx.forEach((i,j)=>{ const x=items[j]; if(!x) return;
+      Object.assign(pFound[i],{name:pFound[i].name.trim(),orig:pFound[i].name.trim(),k100:+x.kcal100||0,p100:+x.p100||0,c100:+x.c100||0,f100:+x.f100||0,stale:false}); });
+    pShowItems();
+    if(pFound.some(x=>x.stale)) $("pNote").textContent="有品項沒有算出結果，請檢查名稱後再按一次。";
+  }catch(e){
+    if(ctl!==pCtl) return;
+    if(!(e&&e.code==="cancelled")) $("pNote").textContent=photoErr(e&&e.code);
+    pSummary();
+  }finally{ if(ctl===pCtl){ $("pRecalc").disabled=false; $("pStop").hidden=true; } }
+});
+function photoErr(code){
+  if(code==="bad_password") $("aiCfg").open=true;
+  return code==="bad_password"?"使用密碼不正確，請重新輸入。"
+    : code==="not_configured"?"後端尚未設定完成，請聯絡網站管理者。"
+    : code==="rate_limited"?"使用次數或額度暫時達到上限，稍後再試。"
+    : code==="image_rejected"?"這張照片無法讀取，請換一張 JPG 或 PNG。"
+    : "請再試一次，或改用上方清單加入。";
 }
 function pReset(){ if(pCtl) pCtl.abort(); $("pResult").hidden=true; $("pFile").value=""; pFound=[]; }
 // 不指定 capture，手機會讓使用者選擇拍照、相簿或檔案
@@ -702,13 +785,13 @@ async function analyzePhoto(file){
   $("pItems").innerHTML=""; $("pNote").textContent=""; $("pActions").hidden=true;
   const hint=$("pHint").value.trim();
   try{
-    const res=await analyze(file,P_PROMPT+(hint?`\n使用者補充：${hint}`:""),ctl.signal);
+    const res=await analyze({file,hint},ctl.signal);
     if(ctl!==pCtl) return;
-    pFound=(Array.isArray(res&&res.items)?res.items:[]).filter(x=>x&&x.name).map(x=>({name:String(x.name),portion:String(x.portion||""),kcal:+x.kcal||0,p:+x.p||0,c:+x.c||0,f:+x.f||0}));
+    pFound=(Array.isArray(res&&res.items)?res.items:[]).filter(x=>x&&x.name).map(x=>({name:String(x.name),orig:String(x.name),
+      grams:Math.max(0,+x.grams||0),k100:+x.kcal100||0,p100:+x.p100||0,c100:+x.c100||0,f100:+x.f100||0,on:true,stale:false}));
     $("pStop").hidden=true;
-    if(!pFound.length){ $("pStatus").textContent="照片中沒有辨識到食物"; $("pNote").textContent="換一張清楚一點、從上方拍的照片再試。"; return; }
-    $("pStatus").textContent=`辨識到 ${pFound.length} 樣，共約 ${r0(pFound.reduce((s,x)=>s+x.kcal,0))} 大卡`;
-    $("pNote").textContent=(res.note?res.note+" ":"")+"熱量可以直接修改，確認後再加入。";
+    if(!pFound.length){ $("pStatus").textContent="照片中沒有辨識到食物"; $("pNote").textContent="換一張清楚一點、從上方拍的照片再試，或按「新增品項」自己輸入。"; $("pActions").hidden=false; pShowItems(); return; }
+    $("pNote").textContent=(res.note?res.note+" ":"")+"可以修改克數；品項認錯就改名稱，再按「重新計算」。";
     pShowItems(); $("pActions").hidden=false;
   }catch(e){
     if(ctl!==pCtl) return;
@@ -717,25 +800,16 @@ async function analyzePhoto(file){
     if(code==="cancelled"){ $("pResult").hidden=true; return; }
     if(code==="not_granted"||code==="sampling_disabled"||code==="images_unavailable"){ $("photo").hidden=true; toast("此帳號無法使用拍照辨識"); return; }
     $("pStatus").textContent="辨識失敗";
-    if(code==="bad_password"){ $("aiCfg").open=true; }
-    $("pNote").textContent = code==="bad_password"?"使用密碼不正確，請重新輸入。"
-      : code==="not_configured"?"後端尚未設定完成，請聯絡網站管理者。"
-      : code==="rate_limited"?"使用次數或額度暫時達到上限，稍後再試。"
-      : code==="image_rejected"?"這張照片無法讀取，請換一張 JPG 或 PNG。"
-      : "請再試一次，或改用上方清單加入。";
+    $("pNote").textContent = photoErr(code);
   }
 }
 $("pStop").addEventListener("click",()=>{ if(pCtl) pCtl.abort(); });
 $("pCancel").addEventListener("click",pReset);
 $("pAdd").addEventListener("click",()=>{
-  const meal=$("meal").value, add=[];
-  $("pItems").querySelectorAll("input[type=checkbox]").forEach(cb=>{
-    if(!cb.checked) return;
-    const i=+cb.dataset.i, it=pFound[i], k=num($(`pItems`).querySelector(`[data-k="${i}"]`).value);
-    const ratio = it.kcal&&k!=null ? k/it.kcal : 1;
-    add.push({id:Date.now().toString(36)+i+Math.random().toString(36).slice(2,5),meal,qty:1,name:it.name,unit:"拍照估算 "+it.portion,
-      kcal:k??it.kcal,p:r1(it.p*ratio),c:r1(it.c*ratio),f:r1(it.f*ratio)});
-  });
+  const meal=$("meal").value;
+  const add=pFound.filter(it=>it.on&&!it.stale&&it.name.trim()).map((it,i)=>({id:Date.now().toString(36)+i+Math.random().toString(36).slice(2,5),
+    meal,qty:1,name:it.name.trim(),unit:`${r0(it.grams)} g・照片估算`,
+    kcal:r0(per(it,"k100")),p:r1(per(it,"p100")),c:r1(per(it,"c100")),f:r1(per(it,"f100"))}));
   if(!add.length){ toast("請至少勾選一樣"); return; }
   state.day.items=[...state.day.items,...add]; renderLog(); saveDay();
   toast(`已加入${MEALS[meal]} ${add.length} 樣`); pReset();

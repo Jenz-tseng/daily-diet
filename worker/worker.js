@@ -5,11 +5,17 @@ const ALLOWED_ORIGINS = ["https://jenz-tseng.github.io"];
 const MODEL = "gpt-4o-mini";
 const MAX_IMAGE_CHARS = 3_000_000; // data URL 長度上限，約 2 MB 的圖片
 
-const PROMPT = `你是台灣的營養師。附上的照片是一餐食物。請辨識照片中每一樣食物，依台灣常見份量估計實際份量、熱量與三大營養素。
-若有醬汁、勾芡、油炸，熱量要算進去。若照片不是食物，items 回傳空陣列。
+// 兩種請求：照片辨識（回傳品項、克數、每 100 公克營養），以及使用者改過品項後的重新計算（純文字）
+const PHOTO_PROMPT = `你是台灣的營養師。附上的照片是一餐食物。請辨識照片中每一樣食物，估計實際重量（公克），以及該食物以照片中烹調方式的每 100 公克營養。
+若有醬汁、勾芡、油炸，要算進每 100 公克的數值。若照片不是食物，items 回傳空陣列。
 只回覆 JSON，格式如下，不要其他文字：
-{"items":[{"name":"白飯","portion":"約1碗(160g)","kcal":280,"p":8,"c":62,"f":0.6}],"note":"一句話說明估計的不確定處"}
-kcal 單位大卡，p/c/f 為蛋白質、醣類、脂肪的公克數，都是數字。`;
+{"items":[{"name":"白飯","grams":160,"kcal100":175,"p100":5,"c100":39,"f100":0.4}],"note":"一句話說明估計的不確定處"}
+grams 為公克；kcal100 為每 100 公克大卡；p100/c100/f100 為每 100 公克蛋白質、醣類、脂肪公克數；都是數字。`;
+const RECALC_PROMPT = `你是台灣的營養師。以下是使用者確認過的食物名稱，請依台灣常見做法估計每一樣的每 100 公克營養。
+只回覆 JSON，items 順序與名稱要和輸入完全相同，不要其他文字：
+{"items":[{"name":"白飯","kcal100":175,"p100":5,"c100":39,"f100":0.4}]}
+kcal100 為每 100 公克大卡；p100/c100/f100 為每 100 公克蛋白質、醣類、脂肪公克數；都是數字。
+食物：`;
 
 function cors(origin) {
   const allow = ALLOWED_ORIGINS.includes(origin) ? origin : ALLOWED_ORIGINS[0];
@@ -51,11 +57,22 @@ export default {
 
     let body;
     try { body = await request.json(); } catch { return json({ error: "bad_request" }, 400, origin); }
-    const image = body && body.image;
-    if (typeof image !== "string" || !/^data:image\/(jpeg|png|webp);base64,/.test(image) || image.length > MAX_IMAGE_CHARS) {
-      return json({ error: "image_rejected" }, 400, origin);
+    let content;
+    if (Array.isArray(body && body.names)) {
+      const names = body.names.slice(0, 20).map(n => String(n).slice(0, 40).trim()).filter(Boolean);
+      if (!names.length) return json({ error: "bad_request" }, 400, origin);
+      content = [{ type: "text", text: RECALC_PROMPT + JSON.stringify(names) }];
+    } else {
+      const image = body && body.image;
+      if (typeof image !== "string" || !/^data:image\/(jpeg|png|webp);base64,/.test(image) || image.length > MAX_IMAGE_CHARS) {
+        return json({ error: "image_rejected" }, 400, origin);
+      }
+      const hint = typeof body.hint === "string" ? body.hint.slice(0, 200) : "";
+      content = [
+        { type: "text", text: PHOTO_PROMPT + (hint ? `\n使用者補充：${hint}` : "") },
+        { type: "image_url", image_url: { url: image } },
+      ];
     }
-    const hint = typeof body.hint === "string" ? body.hint.slice(0, 200) : "";
 
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
@@ -64,13 +81,7 @@ export default {
         model: MODEL,
         max_tokens: 800,
         response_format: { type: "json_object" },
-        messages: [{
-          role: "user",
-          content: [
-            { type: "text", text: PROMPT + (hint ? `\n使用者補充：${hint}` : "") },
-            { type: "image_url", image_url: { url: image } },
-          ],
-        }],
+        messages: [{ role: "user", content }],
       }),
     });
     if (!r.ok) return json({ error: r.status === 429 ? "rate_limited" : "upstream_error" }, r.status === 429 ? 429 : 502, origin);
