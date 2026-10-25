@@ -22,19 +22,22 @@
   --f-display:"Noto Serif TC","Songti TC",serif;
   --f-body:"Noto Sans TC","PingFang TC","Microsoft JhengHei",system-ui,sans-serif;
   --f-num:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+  --skin:#F2C9A0; --hair:#3A2C25; --face:#2B211C;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#121815; --surface:#1A221E; --sunk:#232D28; --line:#33403A;
   --fg:#E6ECE8; --muted:#9AA8A0;
   --accent:#6FBF94; --accent-ink:#0F1A14; --accent-soft:#22362B;
   --carb:#E0A44E; --prot:#E07A72; --fat:#8C9EDB;
-  --ok:#6FBF94; --warn:#E0A44E; --bad:#E07A72; color-scheme:dark}}
+  --ok:#6FBF94; --warn:#E0A44E; --bad:#E07A72;
+  --skin:#E0B48C; --hair:#7A5E4E; color-scheme:dark}}
 :root[data-theme="dark"]{
   --bg:#121815; --surface:#1A221E; --sunk:#232D28; --line:#33403A;
   --fg:#E6ECE8; --muted:#9AA8A0;
   --accent:#6FBF94; --accent-ink:#0F1A14; --accent-soft:#22362B;
   --carb:#E0A44E; --prot:#E07A72; --fat:#8C9EDB;
-  --ok:#6FBF94; --warn:#E0A44E; --bad:#E07A72; color-scheme:dark}
+  --ok:#6FBF94; --warn:#E0A44E; --bad:#E07A72;
+  --skin:#E0B48C; --hair:#7A5E4E; color-scheme:dark}
 
 *{box-sizing:border-box}
 body{background:var(--bg);color:var(--fg);font-family:var(--f-body);font-size:15px;line-height:1.6}
@@ -143,6 +146,22 @@ details p,details li{font-size:13px;color:var(--muted)}
 .pi .pk em{font-style:normal;font-size:12px;color:var(--warn);font-family:var(--f-body)}
 .pi .pm{grid-column:2/-1;color:var(--muted);font-size:12px}
 button:disabled{opacity:.45;cursor:not-allowed}
+.journey{display:grid;grid-template-columns:150px minmax(0,1fr);gap:24px;align-items:center;margin-bottom:20px}
+@media (max-width:520px){.journey{grid-template-columns:110px minmax(0,1fr);gap:14px}}
+.buddy-wrap{display:flex;flex-direction:column;align-items:center;gap:2px}
+.buddy-wrap svg{width:100%;height:auto;max-width:150px}
+.jinfo{min-width:0;display:flex;flex-direction:column;gap:8px}
+.jinfo h2{margin:0}
+.jhead{margin:0;font-size:14px}
+.jhead b{font-family:var(--f-num);font-weight:500;color:var(--accent)}
+.jtrack{position:relative;height:10px;background:var(--sunk);border-radius:5px;margin-top:6px}
+.jfill{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:5px;width:0;transition:width 1.2s ease}
+.jdot{position:absolute;top:50%;width:18px;height:18px;border-radius:50%;background:var(--surface);border:3px solid var(--accent);transform:translate(-50%,-50%);left:0;transition:left 1.2s ease}
+.jlabels{display:flex;justify-content:space-between;gap:8px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.jlabels #jCur{color:var(--fg);font-weight:700}
+.jdays{display:flex;gap:4px;flex-wrap:wrap}
+.jdays i{width:14px;height:14px;border-radius:4px;background:var(--sunk);display:block}
+.jdays i.ok{background:var(--accent)}.jdays i.over{background:var(--bad)}
 /* iPhone 會把字小於 16px 的輸入框在點擊時自動放大，觸控裝置一律用 16px */
 @media (pointer:coarse){input,select,textarea{font-size:16px!important}}
 .meal{margin-top:16px}
@@ -176,6 +195,24 @@ footer{color:var(--muted);font-size:12px;margin-top:24px;max-width:70ch}
     </div>
     <span class="sync" id="sync">本機儲存</span>
   </header>
+
+  <section class="card journey" id="journey">
+    <div class="buddy-wrap">
+      <svg id="buddy" viewBox="0 0 120 170" role="img" aria-label="體態示意小人"></svg>
+      <span class="note" id="buddyCap"></span>
+    </div>
+    <div class="jinfo">
+      <h2 id="jTitle">減重進度</h2>
+      <p class="jhead" id="jHead"></p>
+      <div class="jtrack" aria-hidden="true"><div class="jfill" id="jFill"></div><div class="jdot" id="jDot"></div></div>
+      <div class="jlabels"><span id="jStart"></span><span id="jCur"></span><span id="jGoal"></span></div>
+      <div class="jdays" id="jDays" aria-label="近 14 天熱量控制"></div>
+      <div class="row" style="justify-content:space-between">
+        <span class="note" id="jNote"></span>
+        <button class="ghost" type="button" id="jReset" style="font-size:12px;padding:4px 10px" hidden>以目前體重重新開始</button>
+      </div>
+    </div>
+  </section>
 
   <div class="grid">
     <div class="col">
@@ -459,7 +496,7 @@ async function initRemote(){
     remote={profileRef, days:profileRef.collection("days")};
     $("sync").textContent="已同步到你的帳號";
     const snap=await profileRef.get();
-    if(snap.exists){ state.profile={...EXAMPLE,...snap.data()}; state.isExample=false; fillForm(); recalc(); }
+    if(snap.exists){ state.profile={...EXAMPLE,...snap.data()}; state.isExample=false; fillForm(); recalc(); ensureStart(); }
     else if(!state.isExample){ await profileRef.set(state.profile); } // 把本機資料搬上去
     remote.days.orderBy("date","desc").limit(200).onSnapshot(s=>{
       s.docs.forEach(doc=>{ state.recent[doc.id]=doc.data(); });
@@ -487,7 +524,7 @@ function formSummary(){
     : `${p.sex==="f"?"女":"男"}・${p.age} 歲・${p.height} cm・${p.weight} kg（點此修改）`;
 }
 function readForm(){
-  const p={sex:state.profile.sex};
+  const p={...state.profile};
   FIELDS.forEach(f=>{ p[f]=$(f).value; });
   return p;
 }
@@ -627,7 +664,102 @@ function renderHistory(){
   s+=`<line x1="${pl}" x2="${W-pr}" y1="${y(tgt)}" y2="${y(tgt)}" stroke="var(--muted)" stroke-width="1.5" stroke-dasharray="5 4"/>`;
   s+=`</svg>`;
   $("hist").innerHTML=s;
+  renderJourney();
 }
+
+// ---------- 減重進度與小人 ----------
+// 胖瘦程度 f：0 = 苗條、1 = 圓潤，依 BMI 換算
+const fatOf = (w,hm) => Math.max(0,Math.min(1,(w/(hm*hm)-19)/13));
+function dayKcal(d){ const b=state.recent[d]||(d===state.date?state.day:null)||local.get("day:"+d); return b?{k:totals(b.items||[]).kcal,w:num(b.weight)}:{k:0,w:null}; }
+// 成功控制：有記錄且落在目標的 60%–110%（吃太少不算成功）
+const dayOk = (k,t) => k>=t*0.6 && k<=t*1.1;
+function journey(){
+  if(!A||state.isExample) return null;
+  const p=state.profile, hm=A.h/100, today=todayStr();
+  const start=num(p.startWeight)||A.w, sd=p.startDate||today;
+  const lose = p.goal==="lose";
+  const goal = lose ? (start>24*hm*hm ? r1(23.9*hm*hm) : r1(Math.max(18.5*hm*hm,start-2))) : start;
+  let logged=0, ok=0, est=0, lastW=null;
+  for(let d=sd, n=0; d<=today && n<400; d=shift(d,1), n++){
+    const {k,w}=dayKcal(d);
+    if(w) lastW=w;
+    if(k>0){ logged++; if(dayOk(k,A.target)) ok++; est+=(A.tdee-k)/7700; }
+  }
+  const cur = lastW ?? r1(start-est);
+  const prog = lose ? Math.max(0,Math.min(1,(start-cur)/Math.max(0.1,start-goal))) : (logged?ok/logged:0);
+  const days=[]; for(let i=13;i>=0;i--){ const d=shift(today,-i), {k}=dayKcal(d); days.push({d,s:k<=0?"":dayOk(k,A.target)?"ok":"over"}); }
+  return {start,goal,cur,prog,logged,ok,est,byWeight:lastW!=null,lose,days,sd,
+    fStart:fatOf(start,hm), fCur:fatOf(lose?Math.max(cur,goal):cur,hm)};
+}
+function buddySVG(f,sex){
+  const cx=60, sh=34+12*f, bw=28+42*f, hw=30+24*f, hr=17+3*f, lw=10+7*f, lx=6+7*f;
+  const shirt = sex==="f" ? "var(--prot)" : "var(--accent)";
+  const legs = `<rect x="${cx-lx-lw/2}" y="112" width="${lw}" height="42" rx="${lw/2}" fill="var(--fat)"/>
+    <rect x="${cx+lx-lw/2}" y="112" width="${lw}" height="42" rx="${lw/2}" fill="var(--fat)"/>
+    <ellipse cx="${cx-lx}" cy="156" rx="${lw/2+3}" ry="4" fill="var(--fg)"/><ellipse cx="${cx+lx}" cy="156" rx="${lw/2+3}" ry="4" fill="var(--fg)"/>`;
+  const torso = `M${cx-sh/2} 60 C${cx-bw/2-4} 70 ${cx-bw/2-6} 96 ${cx-hw/2} 116 L${cx+hw/2} 116 C${cx+bw/2+6} 96 ${cx+bw/2+4} 70 ${cx+sh/2} 60 Z`;
+  const arms = [-1,1].map(s=>`<line x1="${cx+s*(sh/2-2)}" y1="64" x2="${cx+s*(bw/2+9)}" y2="104" stroke="${shirt}" stroke-width="${9+4*f}" stroke-linecap="round"/>
+    <circle cx="${cx+s*(bw/2+9)}" cy="106" r="${4.5+1.5*f}" fill="var(--skin)"/>`).join("");
+  const skirt = sex==="f" ? `<path d="M${cx-hw/2-2} 104 L${cx+hw/2+2} 104 L${cx+hw/2+12} 128 L${cx-hw/2-12} 128 Z" fill="var(--prot)"/>` : "";
+  const hairBack = sex==="f" ? `<path d="M${cx-hr-3} 34 Q${cx-hr-6} 60 ${cx-hr+2} 64 L${cx+hr-2} 64 Q${cx+hr+6} 60 ${cx+hr+3} 34 Z" fill="var(--hair)"/>` : "";
+  const hairTop = sex==="f"
+    ? `<path d="M${cx-hr-2} 32 Q${cx} ${8} ${cx+hr+2} 32 Q${cx+4} 22 ${cx-hr-2} 32 Z" fill="var(--hair)"/>`
+    : `<path d="M${cx-hr} 30 Q${cx-hr+2} ${12} ${cx} 13 Q${cx+hr-2} ${12} ${cx+hr} 30 Q${cx+6} 20 ${cx-hr} 30 Z" fill="var(--hair)"/>`;
+  return `<ellipse cx="${cx}" cy="160" rx="${30+14*f}" ry="5" fill="var(--sunk)"/>
+    ${legs}${hairBack}${arms}
+    <rect x="${cx-5}" y="46" width="10" height="16" fill="var(--skin)"/>
+    <path d="${torso}" fill="${shirt}"/>${skirt}
+    <ellipse cx="${cx}" cy="32" rx="${hr}" ry="${hr-0.5}" fill="var(--skin)"/>${hairTop}
+    <circle cx="${cx-6}" cy="33" r="1.8" fill="var(--face)"/><circle cx="${cx+6}" cy="33" r="1.8" fill="var(--face)"/>
+    <ellipse cx="${cx-9-2*f}" cy="38" rx="${2.5+f}" ry="1.5" fill="var(--prot)" opacity=".35"/><ellipse cx="${cx+9+2*f}" cy="38" rx="${2.5+f}" ry="1.5" fill="var(--prot)" opacity=".35"/>
+    <path d="M${cx-4} 39 Q${cx} 42.5 ${cx+4} 39" stroke="var(--face)" stroke-width="1.5" fill="none" stroke-linecap="round"/>`;
+}
+// 小人胖瘦用動畫過渡；第一次載入從起點體態慢慢變到目前體態
+let buddyF=null, buddyAnim=0;
+function animateBuddy(from,to,sex){
+  cancelAnimationFrame(buddyAnim);
+  const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if(reduce||Math.abs(from-to)<0.002){ buddyF=to; $("buddy").innerHTML=buddySVG(to,sex); return; }
+  const t0=performance.now(), dur=1600;
+  const step=now=>{ const t=Math.min(1,(now-t0)/dur), e=t<.5?2*t*t:1-Math.pow(-2*t+2,2)/2;
+    buddyF=from+(to-from)*e; $("buddy").innerHTML=buddySVG(buddyF,sex);
+    if(t<1) buddyAnim=requestAnimationFrame(step); };
+  buddyAnim=requestAnimationFrame(step);
+}
+let jResetArm=false;
+function renderJourney(){
+  if(!state.profile) return;
+  const sex=state.profile.sex, J=journey();
+  if(!J){
+    const f=A?fatOf(A.w,A.h/100):0.4;
+    animateBuddy(buddyF??f,f,sex);
+    $("jTitle").textContent="減重進度";
+    $("jHead").textContent="在下方填好身體資料並按「儲存我的資料」，就會從今天開始追蹤進度。";
+    $("jFill").style.width="0%"; $("jDot").style.left="0%";
+    ["jStart","jCur","jGoal","jNote","buddyCap"].forEach(id=>$(id).textContent="");
+    $("jDays").innerHTML=""; $("jReset").hidden=true; return;
+  }
+  animateBuddy(buddyF??J.fStart, J.fCur, sex);
+  const pct=r0(J.prog*100);
+  $("jTitle").textContent = J.lose ? "減重進度" : "飲食控制進度";
+  const diff=r1(J.start-J.cur);
+  $("jHead").innerHTML = J.lose
+    ? `已成功控制熱量 <b>${J.ok}</b> 天（記錄 ${J.logged} 天），${J.byWeight?"依體重紀錄":"估計"}${diff>=0?`減了 <b>${diff}</b> kg`:`增加了 <b>${-diff}</b> kg`}，完成 <b>${pct}%</b>`
+    : `已記錄 ${J.logged} 天，其中 <b>${J.ok}</b> 天熱量控制在目標內（<b>${pct}%</b>）`;
+  $("jFill").style.width=pct+"%"; $("jDot").style.left=pct+"%";
+  if(J.lose){ $("jStart").textContent=`起點 ${J.start} kg`; $("jCur").textContent=`目前 ${J.cur} kg`; $("jGoal").textContent=`目標 ${J.goal} kg`; }
+  else { $("jStart").textContent="0%"; $("jCur").textContent=`目前 ${J.cur} kg`; $("jGoal").textContent="100%"; }
+  $("jDays").innerHTML=J.days.map(x=>`<i class="${x.s}" title="${x.d}${x.s==="ok"?" 控制成功":x.s==="over"?" 超出或不足":" 沒有記錄"}"></i>`).join("");
+  $("jNote").textContent = `從 ${md(J.sd)} 開始・方塊為近 14 天（綠：控制成功，紅：超出或吃太少）${J.byWeight?"":"・記錄體重會更準"}`;
+  $("buddyCap").textContent = J.lose ? (J.prog>=1?"達標了！":`還差 ${r1(Math.max(0,J.cur-J.goal))} kg`) : "";
+  $("jReset").hidden=false; $("jReset").textContent="以目前體重重新開始"; jResetArm=false;
+}
+$("jReset").addEventListener("click",async()=>{
+  if(!jResetArm){ jResetArm=true; $("jReset").textContent="再按一次確認重設"; return; }
+  const J=journey(); if(!J) return;
+  state.profile={...state.profile,startWeight:J.cur,startDate:todayStr()};
+  buddyF=null; renderJourney(); await saveProfileData(state.profile); toast("已從今天重新開始追蹤");
+});
 
 // ---------- 事件 ----------
 $("sexSeg").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b) return;
@@ -637,6 +769,8 @@ FIELDS.forEach(f=>$(f).addEventListener("input",()=>{ state.profile=readForm(); 
 function markDirty(){ $("profileState").textContent="有變更尚未儲存"; }
 $("saveProfile").addEventListener("click",async()=>{
   state.profile=readForm(); state.isExample=false; $("exampleNote").hidden=true;
+  if(!num(state.profile.startWeight)){ state.profile.startWeight=state.profile.weight; state.profile.startDate=todayStr(); }
+  renderJourney();
   await saveProfileData(state.profile); $("profileState").textContent="已儲存"; toast("已儲存身體資料");
   formSummary(); $("formFold").open=false;
 });
@@ -874,8 +1008,16 @@ $("pAdd").addEventListener("click",()=>{
   state.isExample = !saved;
   local.keys().forEach(d=>{ state.recent[d]=local.get("day:"+d); });
   fillForm(); renderFoods(); loadDay(); recalc();
+  ensureStart();
   initRemote(); initPhoto();
 })();
+// 舊資料沒有起點：以目前體重、最早一筆紀錄的日期當起點，只寫入一次
+function ensureStart(){
+  if(state.isExample||num(state.profile.startWeight)) return;
+  const first=Object.keys(state.recent).filter(d=>/^\d{4}-\d{2}-\d{2}$/.test(d)).sort()[0];
+  state.profile={...state.profile,startWeight:state.profile.weight,startDate:first&&first<todayStr()?first:todayStr()};
+  saveProfileData(state.profile); renderJourney();
+}
 </script>
 
 </body>
