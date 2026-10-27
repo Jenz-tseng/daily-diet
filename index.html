@@ -124,8 +124,10 @@ details p,details li{font-size:13px;color:var(--muted)}
 .chip{font:inherit;font-size:13px;background:var(--sunk);color:var(--fg);border:1px solid transparent;border-radius:99px;padding:4px 10px;cursor:pointer;text-align:left}
 .chip:hover{border-color:var(--accent)}
 .chip em{font-style:normal;color:var(--muted);font-family:var(--f-num);font-size:12px;margin-left:4px}
-.custom{display:grid;grid-template-columns:2fr repeat(4,minmax(0,1fr)) auto;gap:8px;align-items:end;margin-top:10px}
-@media (max-width:560px){.custom{grid-template-columns:repeat(2,minmax(0,1fr))}.custom .nm{grid-column:1/-1}}
+.custom{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;align-items:end;margin-top:10px}
+.custom .nm,.custom .cbtns{grid-column:1/-1}
+.cbtns{display:flex;gap:8px;justify-content:flex-end}
+@media (max-width:560px){.custom{grid-template-columns:repeat(3,minmax(0,1fr))}}
 
 .photo{margin-top:14px;padding:12px;border:1px dashed var(--accent);border-radius:10px;background:var(--accent-soft)}
 .upbtn{display:inline-flex;flex-direction:row;align-items:center;color:var(--accent-ink);background:var(--accent);border:0;font-weight:700;font-size:14px;padding:8px 14px;border-radius:8px;cursor:pointer}
@@ -337,13 +339,16 @@ footer{color:var(--muted);font-size:12px;margin-top:24px;max-width:70ch}
           </div>
           <details>
             <summary>自訂食物（看營養標示輸入）</summary>
+            <p class="note" id="cHint" style="margin:8px 0 0" hidden>填好名稱後按「自動計算」，會估算熱量與營養；份量不填會用常見一份。數字都可以再修改。</p>
             <div class="custom">
-              <label class="nm">名稱<input id="cName" placeholder="例如：公司附近的雞肉飯"></label>
+              <label class="nm">名稱<input id="cName" placeholder="例如：雞肉飯一碗"></label>
+              <label>份量<input id="cG" type="number" inputmode="decimal" placeholder="g"></label>
               <label>熱量<input id="cKcal" type="number" inputmode="decimal" placeholder="kcal"></label>
               <label>蛋白質<input id="cP" type="number" inputmode="decimal" placeholder="g"></label>
               <label>醣類<input id="cC" type="number" inputmode="decimal" placeholder="g"></label>
               <label>脂肪<input id="cF" type="number" inputmode="decimal" placeholder="g"></label>
-              <button class="primary" type="button" id="cAdd">加入</button>
+              <div class="cbtns"><button class="ghost" type="button" id="cAuto" hidden>自動計算</button>
+              <button class="primary" type="button" id="cAdd">加入</button></div>
             </div>
           </details>
         </div>
@@ -778,11 +783,47 @@ $("saveProfile").addEventListener("click",async()=>{
 $("q").addEventListener("input",renderFoods);
 $("foods").addEventListener("click",e=>{ const c=e.target.closest(".chip"); if(!c) return;
   const f=FOODS[+c.dataset.i]; addItem({name:f.name,unit:f.unit,kcal:f.kcal,p:f.p,c:f.c,f:f.f}); });
-$("cAdd").addEventListener("click",()=>{
-  const name=$("cName").value.trim(), kcal=num($("cKcal").value);
-  if(!name||kcal==null){ toast("請填名稱與熱量"); return; }
-  addItem({name,unit:"自訂",kcal,p:num($("cP").value)||0,c:num($("cC").value)||0,f:num($("cF").value)||0});
-  ["cName","cKcal","cP","cC","cF"].forEach(id=>$(id).value="");
+// 自訂食物：可用 AI 依名稱估算（份量不填時用常見一份），改份量時依每 100 g 數值重新換算
+let cPer=null, cCtl=null;
+async function cAutoCalc(){
+  const name=$("cName").value.trim();
+  if(!name){ toast("請先填寫名稱"); $("cName").focus(); return false; }
+  if(engine==="proxy"&&!local.get("pwd")){ $("aiCfg").open=true; $("photo").scrollIntoView({block:"center"}); toast("請先輸入使用密碼"); return false; }
+  if(cCtl) cCtl.abort();
+  const ctl=cCtl=new AbortController();
+  $("cAuto").disabled=true; $("cAuto").textContent="計算中…";
+  try{
+    const res=await analyze({names:[name]},ctl.signal);
+    if(ctl!==cCtl) return false;
+    const x=res&&Array.isArray(res.items)&&res.items[0];
+    if(!x||!(+x.kcal100>=0)) throw {code:"invalid_json"};
+    cPer={name,k:+x.kcal100||0,p:+x.p100||0,c:+x.c100||0,f:+x.f100||0};
+    if(!num($("cG").value)) $("cG").value=r0(+x.grams||100);
+    cFill(); return true;
+  }catch(e){
+    if(ctl===cCtl&&!(e&&e.code==="cancelled")) toast(photoErr(e&&e.code));
+    return false;
+  }finally{ if(ctl===cCtl){ $("cAuto").disabled=false; $("cAuto").textContent="自動計算"; } }
+}
+function cFill(){
+  if(!cPer) return;
+  const g=num($("cG").value)||0;
+  $("cKcal").value=r0(cPer.k*g/100); $("cP").value=r1(cPer.p*g/100); $("cC").value=r1(cPer.c*g/100); $("cF").value=r1(cPer.f*g/100);
+}
+$("cAuto").addEventListener("click",cAutoCalc);
+$("cG").addEventListener("input",()=>{ if(cPer&&cPer.name===$("cName").value.trim()) cFill(); });
+$("cName").addEventListener("input",()=>{ cPer=null; });
+$("cAdd").addEventListener("click",async()=>{
+  const name=$("cName").value.trim();
+  if(!name){ toast("請填寫名稱"); return; }
+  // 沒填熱量時先自動計算
+  if(num($("cKcal").value)==null){
+    if(!engine){ toast("請填寫熱量"); return; }
+    if(!await cAutoCalc()) return;
+  }
+  const g=num($("cG").value);
+  addItem({name,unit:g?`${r0(g)} g・自訂`:"自訂",kcal:num($("cKcal").value)||0,p:num($("cP").value)||0,c:num($("cC").value)||0,f:num($("cF").value)||0});
+  ["cName","cG","cKcal","cP","cC","cF"].forEach(id=>$(id).value=""); cPer=null;
 });
 function addItem(f){
   const meal=$("meal").value;
@@ -832,14 +873,15 @@ function pwdState(){
   $("aiCfgSum").textContent = has ? "使用密碼已設定（點此修改）" : "輸入使用密碼（拍照辨識需要）";
   $("aiCfg").open = !has;
 }
+function showAutoCalc(){ $("cAuto").hidden=false; $("cHint").hidden=false; }
 async function initPhoto(){
   if(!(window.claude && window.claude.use)){
     if(!PROXY_URL) return;
-    engine="proxy"; $("photo").hidden=false; $("aiCfg").hidden=false; pwdState(); return;
+    engine="proxy"; $("photo").hidden=false; $("aiCfg").hidden=false; pwdState(); showAutoCalc(); return;
   }
-  engine="claude";
   try{
     sampleFn=await claude.use("sample"); if(!sampleFn) return;
+    engine="claude"; showAutoCalc();
     const lim=await sampleFn.limits().catch(()=>null);
     if(!lim||!lim.images) return;
     $("pFile").accept=lim.images.mediaTypes.join(",");
@@ -854,8 +896,8 @@ const PHOTO_PROMPT = `你是台灣的營養師。附上的照片是一餐食物�
 grams 為公克；kcal100 為每 100 公克大卡；p100/c100/f100 為每 100 公克蛋白質、醣類、脂肪公克數；都是數字。`;
 const RECALC_PROMPT = `你是台灣的營養師。以下是使用者確認過的食物名稱，請依台灣常見做法估計每一樣的每 100 公克營養。
 只回覆 JSON，items 順序與名稱要和輸入完全相同，不要其他文字：
-{"items":[{"name":"白飯","kcal100":175,"p100":5,"c100":39,"f100":0.4}]}
-kcal100 為每 100 公克大卡；p100/c100/f100 為每 100 公克蛋白質、醣類、脂肪公克數；都是數字。
+{"items":[{"name":"白飯","grams":160,"kcal100":175,"p100":5,"c100":39,"f100":0.4}]}
+grams 為這個名稱常見一份的重量（名稱若寫了份量如「一碗」「兩顆」就照名稱估）；kcal100 為每 100 公克大卡；p100/c100/f100 為每 100 公克蛋白質、醣類、脂肪公克數；都是數字。
 食物：`;
 // 照片先縮到長邊 1024px 再送出，省流量也省費用
 function shrink(file){
